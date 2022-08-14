@@ -60,6 +60,14 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     disconnectHandler(socket);
   });
+
+  socket.on('signal-peer-data', (data) => {
+    signalingHandler(data, socket);
+  });
+
+  socket.on('connection-init', (data) => {
+    initializeConnectionHandler(data, socket);
+  });
 });
 
 const createNewRoomHandler = (data, socket) => {
@@ -122,6 +130,18 @@ const joinRoomHandler = (data, socket) => {
     //join socket.io room
     socket.join(roomId);
 
+    // emit to all users which are already in this room to prepare peer connection
+    room.connectedUsers.forEach((user) => {
+      // emit to all users except the user who joined
+      if (user.socketId !== socket.id) {
+        const data = {
+          connectedUserSocketId: socket.id,
+        };
+
+        io.to(user.socketId).emit('prepare-peer-connection', data);
+      }
+    });
+
     //emit an event to all users connected to that room about new user joined
     io.to(roomId).emit('room-update', {
       connectedUsers: room.connectedUsers,
@@ -142,7 +162,7 @@ const disconnectHandler = (socket) => {
     );
 
     // remove user from room
-    room.connectedUsers = room.connectedUsers.filter(
+    room.connectedUsers = room.connectedUsers?.filter(
       (user) => user.socketId.toString() !== socket.id.toString()
     );
 
@@ -150,7 +170,11 @@ const disconnectHandler = (socket) => {
 
     // emit an event to all users connected to that room about user left
     // if no user left in that room then delete that room
-    if (room.connectedUsers.length > 0) {
+    if (room.connectedUsers?.length > 0) {
+      // emit to all users which are still in the room that user disconnected
+      io.to(room.id).emit('user-disconnected', {
+        socketId: socket.id,
+      });
       io.to(room.id).emit('room-update', {
         connectedUsers: room.connectedUsers,
       });
@@ -160,11 +184,23 @@ const disconnectHandler = (socket) => {
   }
 };
 
-const PORT = process.env.PORT || 5000;
+const signalingHandler = (data, socket) => {
+  const { connectedUserSocketId, signal } = data;
 
-// readdirSync('./routes').map((r) =>
-// app.use('/api/v1', require('./routes/' + r))
-// );
-// app.use(errorHandler);
+  const signalingData = { signal, connectedUserSocketId: socket.id };
+
+  io.to(connectedUserSocketId).emit('signal-peer', signalingData);
+};
+
+// information from clients which are already in room that they have prepared for incoming connection
+const initializeConnectionHandler = (data, socket) => {
+  const { connectedUserSocketId } = data;
+
+  const initData = { connectedUserSocketId: socket.id };
+
+  io.to(connectedUserSocketId).emit('initialize-connection', initData);
+};
+
+const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => console.log(`Server has started on port ${PORT}`));
